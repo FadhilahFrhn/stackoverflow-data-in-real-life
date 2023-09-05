@@ -1,0 +1,157 @@
+/* list all the questions and all its answers for any questions related to Python programming language in 2020 */
+SELECT
+  q.id AS q_id,
+  q.title AS question,
+  q.body AS question_body,
+  q.tags AS tags,
+  q.accepted_answer_id AS accepted_answer,
+  a.parent_id AS parent_id,
+  a.id AS answer_id,
+  a.body AS answer,
+  a.score AS answer_score,
+  EXTRACT (year FROM q.creation_date) AS year,
+FROM
+  `bigquery-public-data.stackoverflow.posts_questions` q LEFT JOIN
+  `bigquery-public-data.stackoverflow.posts_answers` a ON a.parent_id = q.id
+WHERE
+  REGEXP_CONTAINS(q.tags, r'(?i)python')
+AND
+  EXTRACT(YEAR FROM q.creation_date) = 2020
+ORDER BY
+  1;
+
+/* how many questions do Indonesians make annually starting from 2015 to 2020 */
+SELECT
+  EXTRACT(year FROM q.creation_date) AS year,
+  COUNT(q.owner_user_id) AS number_of_questions,
+FROM
+  `bigquery-public-data.stackoverflow.posts_questions` q LEFT JOIN
+  `bigquery-public-data.stackoverflow.users` u ON u.id = q.owner_user_id
+WHERE
+  u.location = "indonesia"
+AND
+  EXTRACT(YEAR FROM q.creation_date) BETWEEN 2015 AND 2020
+GROUP BY
+  1
+ORDER BY
+  1;
+
+/* usernames that got badges in Jan 2020 and i create unique ranking based on when they got the badge per class */
+WITH badge_ranking AS (
+  SELECT
+    u.id AS user_id,
+    u.display_name AS username,
+    b.class AS badge_class,
+    b.name AS badge_name,
+    MIN(b.date) AS badge_date,
+  FROM
+    `bigquery-public-data.stackoverflow.users` u LEFT JOIN
+    `bigquery-public-data.stackoverflow.badges` b ON b.user_id = u.id
+  WHERE
+    EXTRACT(YEAR FROM b.date) = 2020 AND EXTRACT(MONTH FROM b.date) = 1
+  GROUP BY
+    1, 2, 3, 4
+)
+SELECT
+  user_id,
+  username,
+  badge_class,
+  badge_name,
+  ROW_NUMBER() OVER (PARTITION BY badge_class ORDER BY badge_date) AS badge_rank
+FROM
+  badge_ranking
+ORDER BY
+  3, 5;
+
+/* the year when questions related to BigQuery got the most answers, then I made a ranking to find out the trend */
+WITH answers_by_year AS (
+  SELECT
+    EXTRACT(year FROM q.creation_date) AS year,
+    COUNT(a.id) AS answer_count,
+  FROM
+    `bigquery-public-data.stackoverflow.posts_answers` a LEFT JOIN
+    `bigquery-public-data.stackoverflow.posts_questions` q ON q.id = a.parent_id
+  WHERE
+    REGEXP_CONTAINS(q.tags, r'(?i)bigquery')
+  GROUP BY
+    1
+)
+SELECT
+  year,
+  answer_count,
+  ROW_NUMBER() OVER (ORDER BY answer_count DESC) AS ranking
+FROM
+  answers_by_year
+ORDER BY
+  2 DESC;
+
+/* look for usernames that have at least 5000 answers, then calculate the average time spent answering each question */
+WITH people_have_5K_answer AS (
+  SELECT
+    u.id AS user_id,
+    COUNT(a.id) AS answer_count,
+    TIMESTAMP_DIFF(MAX(a.creation_date), MIN(a.creation_date), HOUR) AS total_time_span_hours,
+  FROM
+    `bigquery-public-data.stackoverflow.posts_answers` a LEFT JOIN
+    `bigquery-public-data.stackoverflow.users` u ON u.id = a.owner_user_id
+  GROUP BY
+    u.id
+  HAVING
+    answer_count >= 5000
+)
+SELECT
+  user_id,
+  answer_count,
+  total_time_span_hours,
+  TRUNC((total_time_span_hours/answer_count), 2) AS avg_answer,
+FROM
+  people_have_5K_answer
+GROUP BY
+  1, 2, 3
+ORDER BY
+  4 DESC;
+
+/* list top 10 location where users are most located */
+SELECT
+  location,
+  COUNT(id) AS user_count
+FROM
+  `bigquery-public-data.stackoverflow.users`
+WHERE
+  location IS NOT NULL
+GROUP BY
+  1
+ORDER BY
+  2 DESC
+LIMIT
+  10;
+
+/* the number of questions someone might make based on their active year period, i then did a 10th, 25th, median, 75th, 95th percentile distribution of that data */
+WITH user_activity AS (
+  SELECT
+    u.id AS user_id,
+    EXTRACT(year FROM u.last_access_date) - EXTRACT(year FROM u.creation_date) AS number_of_active_years,
+    COUNT(q.id) AS questions_count,
+  FROM
+    `bigquery-public-data.stackoverflow.users` u LEFT JOIN
+    `bigquery-public-data.stackoverflow.posts_questions` q ON q.owner_user_id = u.id
+  WHERE
+    q.owner_user_id IS NOT NULL
+  GROUP BY
+    1, 2
+)
+SELECT
+  user_id,
+  number_of_active_years,
+  questions_count,
+  PERCENTILE_CONT(questions_count, 0.10) OVER (PARTITION BY number_of_active_years) AS percentile_10,
+  PERCENTILE_CONT(questions_count, 0.25) OVER (PARTITION BY number_of_active_years) AS percentile_25,
+  PERCENTILE_CONT(questions_count, 0.50) OVER (PARTITION BY number_of_active_years) AS median,
+  PERCENTILE_CONT(questions_count, 0.75) OVER (PARTITION BY number_of_active_years) AS percentile_75,
+  PERCENTILE_CONT(questions_count, 0.95) OVER (PARTITION BY number_of_active_years) AS percentile_95
+FROM
+  user_activity
+GROUP BY
+  1, 2, 3
+order by
+  3 DESC;
