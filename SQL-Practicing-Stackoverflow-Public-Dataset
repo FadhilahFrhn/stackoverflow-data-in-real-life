@@ -155,3 +155,5 @@ GROUP BY
   1, 2, 3
 order by
   3 DESC;
+
+https://console.cloud.google.com/bigquery?ws=!1m4!1m3!3m2!1sbigquery-public-data!2sstackoverflow
